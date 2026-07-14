@@ -6,7 +6,7 @@ use argon2::password_hash::SaltString;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHasher};
 use axum::{Json, extract::State};
-use sqlx::{Postgres, Transaction, query};
+use sqlx::{Pool, Postgres, Transaction, query};
 use validator::Validate;
 
 pub(crate) async fn register(
@@ -21,13 +21,8 @@ pub(crate) async fn register(
         .parse()
         .map_err(|_| AppError::Internal("Invalid email format".into()))?;
     let user = payload.user;
-    let mut tx: Transaction<'_, Postgres> = state
-        .db_pool
-        .begin()
-        .await
-        .map_err(|e| AppError::DatabaseError(sqlx::Error::BeginFailed))?;
 
-    let registed_user = register_logic(&mut tx, user.username, email, user.password)
+    let registed_user = register_logic(state.db_pool, user.username, email, user.password)
         .await
         .map_err(|e| {
             tracing::error!("DETAILED ERROR: {:?}", e);
@@ -41,17 +36,13 @@ pub(crate) async fn register(
         image: registed_user.image,
     };
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::DatabaseError(sqlx::Error::WorkerCrashed))?;
-
     Ok(Json(RegisterResponse {
         user: user_response,
     }))
 }
 
 pub async fn register_logic(
-    db: &mut Transaction<'_, Postgres>,
+    db: Pool<Postgres>,
     username: String,
     email: String,
     password_raw: String,
@@ -64,29 +55,32 @@ pub async fn register_logic(
         .to_string();
     let hashed_password = UserPasswordHash(password_hash_string);
     let user = User::new(username, email);
-    create(&mut *db, &user, &hashed_password).await?;
+    create(db, &user, &hashed_password).await?;
 
     Ok(user)
 }
 
 async fn create(
-    tx: &mut Transaction<'_, Postgres>,
+    db: Pool<Postgres>,
     user: &User,
     password_hash: &UserPasswordHash,
 ) -> Result<(), AppError> {
+    let mut tx: Transaction<'_, Postgres> = db.begin()
+        .await
+        .map_err(|e| AppError::DatabaseError(sqlx::Error::BeginFailed))?;
+
     query!(
         r#"
-        INSERT INTO users (id, username, email, bio, image, password_hash)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO users (username, email, bio, image, password_hash)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
-        user.id,
         user.username,
         user.email,
         user.bio,
         user.image,
         password_hash.0
     )
-    .execute(&mut **tx)
+    .execute(&mut *tx)
     .await
     .map_err(|e| {
         if let Some(db_err) = e.as_database_error()
@@ -108,5 +102,10 @@ async fn create(
         }
         AppError::DatabaseError(e)
     })?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DatabaseError(sqlx::Error::WorkerCrashed))?;
+
     Ok(())
 }

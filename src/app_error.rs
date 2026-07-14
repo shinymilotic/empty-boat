@@ -57,7 +57,7 @@ impl IntoResponse for AppError {
                 Json(json!({ "errors": { field: [message] } })),
             )
                 .into_response(),
-
+    
             AppError::AuthError => (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({ "errors": { "credentials": ["invalid"] } })),

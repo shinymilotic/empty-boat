@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, postgres::PgRow};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct User {
-    pub id: Uuid,
+    pub id: i64,
     pub email: String,
     pub username: String,
     pub bio: Option<String>,
@@ -14,7 +12,7 @@ pub struct User {
 impl User {
     pub fn new(username: String, email: String) -> Self {
         Self {
-            id: Uuid::now_v7(),
+            id: 0,
             username,
             email,
             bio: None,
